@@ -23,7 +23,14 @@ typedef struct __attribute__((packed)) {
   uint8_t reserved;
 } audio_frame_header_t;
 
+#ifdef AIRPLAY_LOW_MEMORY
+/* 12 × 1,416-byte slots retain about 96 ms of 44.1 kHz audio. Leave internal
+ * heap for the AAC decoder, buffered TCP packets, and control sockets.
+ */
+#define MAX_RING_BUFFER_FRAMES 12
+#else
 #define MAX_RING_BUFFER_FRAMES 1000
+#endif
 #define BYTES_PER_FRAME                                          \
   ((size_t)sizeof(audio_frame_header_t) +                        \
    ((size_t)AAC_FRAMES_PER_PACKET * (size_t)AUDIO_MAX_CHANNELS * \
@@ -49,7 +56,8 @@ esp_err_t audio_buffer_init(audio_buffer_t *buffer);
 void audio_buffer_deinit(audio_buffer_t *buffer);
 void audio_buffer_flush(audio_buffer_t *buffer);
 int audio_buffer_get_frame_count(audio_buffer_t *buffer);
-bool audio_buffer_is_nearly_full(audio_buffer_t *buffer);
+bool audio_buffer_is_nearly_full(audio_buffer_t *buffer,
+                                 size_t incoming_samples);
 /* Newest (highest-RTP) frame currently queued.  Diagnostics only: used to
  * report how far behind the head of the buffer playout is running. */
 bool audio_buffer_peek_newest_rtp(audio_buffer_t *buffer, uint32_t *rtp_out);

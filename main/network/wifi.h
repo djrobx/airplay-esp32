@@ -11,6 +11,9 @@
  */
 void wifi_init_apsta(const char *ap_ssid, const char *ap_password);
 
+/** Initialize only the saved station connection, without a setup AP. */
+void wifi_init_sta_only(void);
+
 /**
  * Block until WiFi is connected and has an IP address
  * @param timeout_ms Timeout in milliseconds (0 = wait forever)

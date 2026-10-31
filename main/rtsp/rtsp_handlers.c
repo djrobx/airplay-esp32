@@ -449,6 +449,10 @@ int rtsp_dispatch(int socket, rtsp_conn_t *conn, const uint8_t *raw_request,
     return -1;
   }
 
+#ifdef AIRPLAY_LOW_MEMORY
+  ESP_LOGI(TAG, "%s request: body=%zu bytes", req.method, req.body_len);
+#endif
+
   // Extract DACP headers if present (AirPlay 1 only — modern iOS AirPlay 2
   // does not send these; it uses MRP for remote control instead).
   // parse_raw_header uses a static buffer — copy before calling again.
@@ -1401,10 +1405,20 @@ static void handle_record(int socket, rtsp_conn_t *conn,
     audio_receiver_set_playing(true);
   } else {
     // Fresh start or post-teardown reconnect: full stream restart.
-    if (!start_audio_receiver_or_fail(socket, conn, req, conn->stream_type)) {
+    bool defer_start = false;
+#ifdef AIRPLAY_LOW_MEMORY
+    // AirPlay 2 can RECORD before its stream SETUP. Do not consume stacks,
+    // sockets, and packet buffers for an unnegotiated UDP stream while the
+    // sender is about to choose buffered TCP and allocate its AAC decoder.
+    defer_start = conn->protocol_version == 2 && conn->stream_type == 0;
+#endif
+    if (defer_start) {
+      ESP_LOGI(TAG, "RECORD: deferring receiver until stream SETUP");
+    } else if (!start_audio_receiver_or_fail(socket, conn, req,
+                                             conn->stream_type)) {
       return;
     }
-    if (conn->client_control_port > 0 && conn->client_ip != 0) {
+    if (!defer_start && conn->client_control_port > 0 && conn->client_ip != 0) {
       audio_receiver_set_client_control(conn->client_ip,
                                         conn->client_control_port);
     }

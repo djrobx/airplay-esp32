@@ -8,6 +8,7 @@
 #include "driver/i2s_std.h"
 #include "driver/gpio.h"
 #include "esp_attr.h"
+#include "esp_heap_caps.h"
 #include "esp_check.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -213,6 +214,10 @@ static void playback_task(void *arg) {
   }
 
   size_t written;
+#ifdef AIRPLAY_LOW_MEMORY
+  int64_t last_audio_log_us = esp_timer_get_time();
+  int peak_pcm = 0;
+#endif
   while (playback_running) {
     if (resample_reinit_needed) {
       resample_reinit_needed = false;
@@ -236,6 +241,17 @@ static void playback_task(void *arg) {
       }
       apply_volume(play_buf, play_samples * 2);
       apply_channel_mode(play_buf, play_samples);
+#ifdef AIRPLAY_LOW_MEMORY
+      for (size_t i = 0; i < play_samples * 2; i++) {
+        int magnitude = play_buf[i];
+        if (magnitude < 0) {
+          magnitude = -magnitude;
+        }
+        if (magnitude > peak_pcm) {
+          peak_pcm = magnitude;
+        }
+      }
+#endif
       led_audio_feed(play_buf, play_samples);
       if (i2s_channel_write(tx_handle, play_buf,
                             play_samples * 2 * sizeof(int16_t), &written,
@@ -258,6 +274,24 @@ static void playback_task(void *arg) {
                            __ATOMIC_RELAXED);
       }
     }
+#ifdef AIRPLAY_LOW_MEMORY
+    int64_t now_us = esp_timer_get_time();
+    if (now_us - last_audio_log_us >= 5000000) {
+      audio_stats_t stats;
+      audio_receiver_get_stats(&stats);
+      ESP_LOGI(TAG,
+               "Audio: rx=%" PRIu32 " decoded=%" PRIu32 " dropped=%" PRIu32
+               " decrypt_errors=%" PRIu32 " overruns=%" PRIu32 " late=%" PRIu32
+               " peak=%d volume_q15=%" PRId32 " free=%zu",
+               stats.packets_received, stats.packets_decoded,
+               stats.packets_dropped, stats.decrypt_errors,
+               stats.buffer_overruns, stats.late_frames,
+               peak_pcm, airplay_get_volume_q15(),
+               heap_caps_get_free_size(MALLOC_CAP_8BIT));
+      last_audio_log_us = now_us;
+      peak_pcm = 0;
+    }
+#endif
   }
 
   free(pcm);

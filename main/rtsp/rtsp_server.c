@@ -81,19 +81,26 @@ void rtsp_server_request_resume(void) {
 // Helper to grow buffer
 static uint8_t *grow_buffer(uint8_t *old_buf, size_t old_size, size_t new_size,
                             size_t data_len) {
-  (void)old_size;
+  // One extra byte is reserved for process_rtsp_buffer's temporary NUL.
   uint8_t *new_buf =
-      heap_caps_malloc(new_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+      heap_caps_malloc(new_size + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!new_buf) {
-    new_buf = malloc(new_size);
+    new_buf = malloc(new_size + 1);
   }
   if (!new_buf) {
+    ESP_LOGE(TAG,
+             "Cannot grow control buffer %zu -> %zu bytes: free=%zu, largest=%zu",
+             old_size, new_size,
+             heap_caps_get_free_size(MALLOC_CAP_8BIT),
+             heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
     return NULL;
   }
   if (old_buf && data_len > 0) {
     memcpy(new_buf, old_buf, data_len);
   }
   free(old_buf);
+  ESP_LOGI(TAG, "Control buffer %zu -> %zu bytes (%zu buffered)", old_size,
+           new_size, data_len);
   return new_buf;
 }
 
@@ -176,7 +183,7 @@ static void client_task(void *pvParameters) {
 
   // Allocate buffer
   size_t buf_capacity = RTSP_BUFFER_INITIAL;
-  uint8_t *buffer = malloc(buf_capacity);
+  uint8_t *buffer = malloc(buf_capacity + 1);
   if (!buffer) {
     ESP_LOGE(TAG, "Failed to allocate buffer");
     rtsp_conn_free(conn);
@@ -205,8 +212,8 @@ static void client_task(void *pvParameters) {
       // Encrypted mode
       while (server_running && conn->encrypted_mode && !slot->should_stop) {
         if (buf_len >= buf_capacity - 1024) {
-          size_t new_cap = buf_capacity < RTSP_BUFFER_LARGE ? RTSP_BUFFER_LARGE
-                                                            : buf_capacity * 2;
+          // Grow gradually so modest messages also fit boards without PSRAM.
+          size_t new_cap = buf_capacity * 2;
           if (new_cap > RTSP_BUFFER_LARGE) {
             goto cleanup;
           }
@@ -236,8 +243,7 @@ static void client_task(void *pvParameters) {
 
     // Plain-text mode
     if (buf_len >= buf_capacity - 1024) {
-      size_t new_cap = buf_capacity < RTSP_BUFFER_LARGE ? RTSP_BUFFER_LARGE
-                                                        : buf_capacity * 2;
+      size_t new_cap = buf_capacity * 2;
       if (new_cap > RTSP_BUFFER_LARGE) {
         break;
       }

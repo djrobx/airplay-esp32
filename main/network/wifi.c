@@ -116,7 +116,9 @@ static void event_handler(void *arg, esp_event_base_t event_base,
                  "WiFi connection failed after %d attempts, switching to "
                  "backoff retries",
                  AP_REENABLE_THRESHOLD);
+#ifndef AIRPLAY_MINIMAL_BUILD
         enable_ap_mode();
+#endif
       }
       // Delayed retries with backoff
       schedule_retry();
@@ -345,6 +347,38 @@ void wifi_init_apsta(const char *ap_ssid, const char *ap_password) {
   if (has_credentials) {
     ESP_LOGI(TAG, "Connecting to WiFi: %s", ssid);
   }
+}
+
+void wifi_init_sta_only(void) {
+  wifi_init_base();
+
+  if (!s_sta_netif) {
+    s_sta_netif = esp_netif_create_default_wifi_sta();
+    char dev_name[65];
+    settings_get_device_name(dev_name, sizeof(dev_name));
+    wifi_set_hostname(dev_name);
+  }
+
+  char ssid[33] = {0};
+  char password[65] = {0};
+  if (settings_get_wifi_ssid(ssid, sizeof(ssid)) != ESP_OK ||
+      settings_get_wifi_password(password, sizeof(password)) != ESP_OK ||
+      ssid[0] == '\0') {
+    ESP_LOGE(TAG, "No saved WiFi credentials; STA-only build cannot connect");
+    return;
+  }
+
+  wifi_config_t sta_config = {0};
+  strlcpy((char *)sta_config.sta.ssid, ssid, sizeof(sta_config.sta.ssid));
+  strlcpy((char *)sta_config.sta.password, password,
+          sizeof(sta_config.sta.password));
+  sta_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+
+  s_retry_num = 0;
+  ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+  ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));
+  ESP_ERROR_CHECK(esp_wifi_start());
+  ESP_LOGI(TAG, "Station-only WiFi started; connecting to saved network");
 }
 
 bool wifi_wait_connected(uint32_t timeout_ms) {

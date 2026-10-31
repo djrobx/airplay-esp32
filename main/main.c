@@ -263,8 +263,10 @@ void app_main(void) {
     }
   }
 #endif
+#ifndef AIRPLAY_MINIMAL_BUILD
   spiffs_storage_init();
   log_stream_init();
+#endif
   ESP_ERROR_CHECK(playback_control_init());
   led_init();
 
@@ -315,24 +317,38 @@ void app_main(void) {
 
   // Start WiFi only if ethernet is not available
   if (!eth_available) {
+#ifdef AIRPLAY_MINIMAL_BUILD
+    wifi_init_sta_only();
+#else
     wifi_init_apsta(NULL, NULL);
+#endif
 
     // Wait for initial WiFi connection if credentials exist
     if (settings_has_wifi_credentials()) {
       if (!wifi_wait_connected(30000)) {
+#ifdef AIRPLAY_MINIMAL_BUILD
+        ESP_LOGE(TAG, "Could not connect to saved WiFi network");
+#else
         ESP_LOGI(TAG, "Connect to 'ESP32-AirPlay-Setup' -> http://192.168.4.1");
+#endif
       }
     } else {
+#ifdef AIRPLAY_MINIMAL_BUILD
+      ESP_LOGE(TAG, "No saved WiFi credentials are configured");
+#else
       ESP_LOGI(TAG, "Connect to 'ESP32-AirPlay-Setup' -> http://192.168.4.1");
+#endif
     }
   } else {
     ESP_LOGI(TAG, "Ethernet connected — skipping WiFi");
   }
 
   // Start services that work on any interface
+#ifndef AIRPLAY_MINIMAL_BUILD
   web_server_start(80);
   task_create_spiram(network_monitor_task, "net_mon", 4096, NULL, 5, NULL,
                      NULL);
+#endif
 
   bool connected = eth_available || wifi_is_connected();
   if (connected) {

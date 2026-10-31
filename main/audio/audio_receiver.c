@@ -114,9 +114,9 @@ esp_err_t audio_receiver_init(void) {
     return ESP_ERR_NO_MEM;
   }
 
-  size_t pending_capacity =
-      sizeof(audio_frame_header_t) +
-      ((size_t)MAX_SAMPLES_PER_FRAME * AUDIO_MAX_CHANNELS * sizeof(int16_t));
+  // The timing engine holds one pool slot, already split into 352-sample
+  // chunks by audio_buffer_queue_decoded, rather than a full codec frame.
+  size_t pending_capacity = BYTES_PER_FRAME;
   audio_timing_init(&receiver.timing, pending_capacity);
   audio_timing_set_format(&receiver.timing, &receiver.stream->format);
 
@@ -143,6 +143,11 @@ void audio_receiver_set_format(const audio_format_t *format) {
   receiver.decoder = NULL;
 
   audio_decoder_config_t cfg = {.format = *format};
+#ifdef AIRPLAY_LOW_MEMORY
+  ESP_LOGI(TAG, "Opening %s decoder: free=%zu largest=%zu", format->codec,
+           heap_caps_get_free_size(MALLOC_CAP_8BIT),
+           heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+#endif
   receiver.decoder = audio_decoder_create(&cfg);
   if (!receiver.decoder) {
     ESP_LOGW(TAG, "Decoder not initialized for codec: %s", format->codec);

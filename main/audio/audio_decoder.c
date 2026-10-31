@@ -150,6 +150,11 @@ audio_decoder_t *audio_decoder_create(const audio_decoder_config_t *config) {
     decoder->kind = AUDIO_DECODER_NONE;
   }
 
+  if (decoder->kind == AUDIO_DECODER_NONE) {
+    free(decoder);
+    return NULL;
+  }
+  ESP_LOGI(TAG, "Opened %s decoder", config->format.codec);
   return decoder;
 }
 

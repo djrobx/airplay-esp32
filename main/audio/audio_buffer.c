@@ -60,6 +60,9 @@ static bool audio_buffer_queue_chunk(audio_buffer_t *buffer,
     buffer->free_stack[buffer->free_top++] = victim;
     /* Take one token from the semaphore to keep it in sync */
     xSemaphoreTakeFromISR(buffer->data_ready, NULL);
+    if (stats) {
+      stats->buffer_overruns++;
+    }
   }
 
   if (buffer->free_top == 0) {
@@ -121,12 +124,18 @@ esp_err_t audio_buffer_init(audio_buffer_t *buffer) {
   buffer->slot_size = BYTES_PER_FRAME;
   buffer->count = 0;
 
-  /* Pool in PSRAM */
+  /* Prefer PSRAM; small low-memory builds can fall back to internal RAM. */
   buffer->pool =
       (uint8_t *)heap_caps_malloc((size_t)buffer->capacity * buffer->slot_size,
                                   MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!buffer->pool) {
-    ESP_LOGE(TAG, "Failed to allocate pool in PSRAM");
+    buffer->pool = (uint8_t *)heap_caps_malloc(
+        (size_t)buffer->capacity * buffer->slot_size,
+        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  }
+  if (!buffer->pool) {
+    ESP_LOGE(TAG, "Failed to allocate %zu-byte audio frame pool",
+             (size_t)buffer->capacity * buffer->slot_size);
     return ESP_ERR_NO_MEM;
   }
 
@@ -299,18 +308,29 @@ bool audio_buffer_bulk_start_rtp(audio_buffer_t *buffer, uint32_t *rtp_out) {
 
 /* ---------- nearly full check (for back-pressure) ---------- */
 
-bool audio_buffer_is_nearly_full(audio_buffer_t *buffer) {
+bool audio_buffer_is_nearly_full(audio_buffer_t *buffer,
+                                 size_t incoming_samples) {
   if (!buffer) {
     return false;
   }
 
   int count = 0;
+  int free_slots = 0;
   portENTER_CRITICAL(&buffer->lock);
   count = buffer->count;
+  free_slots = buffer->free_top;
   portEXIT_CRITICAL(&buffer->lock);
 
-  // Consider buffer "nearly full" when > 90% capacity
-  return count > (buffer->capacity * 9 / 10);
+  // A single decoded AAC frame spans three pool slots. With a small pool,
+  // a percentage threshold alone can admit it with only two slots free.
+  // free_top also accounts for any slot still held by the playback task.
+  size_t required_slots =
+      (incoming_samples + AAC_FRAMES_PER_PACKET - 1) / AAC_FRAMES_PER_PACKET;
+  if (required_slots == 0) {
+    required_slots = 1;
+  }
+  return count > (buffer->capacity * 9 / 10) ||
+         (size_t)free_slots < required_slots;
 }
 
 /* ---------- take (consumer) ---------- */
